@@ -29,3 +29,4 @@ function init() {
 }
 
 module.exports = { db, init };
+db.prepare('ALTER TABLE jobs ADD COLUMN retries INTEGER DEFAULT 0').run();
