@@ -192,3 +192,6 @@ process.on('SIGINT', () => {
   stopWorkers();
   process.exit(0);
 });
+
+const delay = Math.min(5000 + Math.random() * 1000, 10000);
+setTimeout(() => { /* re-enqueue */ }, delay);
