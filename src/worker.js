@@ -2,6 +2,12 @@ const { db } = require('./db');
 const { getConfig } = require('./config');
 const { exec } = require('child_process');
 
+const logger = {
+  info: (msg) => console.log(`[INFO] ${msg}`),
+  warn: (msg) => console.warn(`[WARN] ${msg}`),
+  error: (msg) => console.error(`[ERROR] ${msg}`),
+};
+
 let running = false;
 let workerIdCounter = 0;
 
