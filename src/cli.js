@@ -1,122 +1,48 @@
 #!/usr/bin/env node
-const { Command } = require('commander');
-const program = new Command();
-const { init } = require('./db');
-const { enqueue, list, get, moveToState } = require('./queue');
+const { program } = require('commander');
+const { enqueue } = require('./enqueue');
+const { showStatus } = require('./status');
 const { startWorkers, stopWorkers } = require('./worker');
-const { setConfig, getConfig } = require('./config');
-const Database = require('better-sqlite3');
 
-// Initialize database
-init();
-const db = new Database('src/queue.db');
-
-// CLI setup
 program
   .name('queuectl')
-  .description('CLI job queue with retries and DLQ')
-  .version('0.1.0');
+  .description('Queue control CLI tool')
+  .version('1.0.0');
 
-// Enqueue command
+// Start workers
 program
-  .command('enqueue')
-  .argument('<job-json>', 'job as JSON string')
-  .description('Enqueue a new job')
-  .action((jobJson) => {
-    const obj = JSON.parse(jobJson);
-    if (!obj.command) {
-      console.error('Job must include a "command" field');
-      process.exit(2);
-    }
-    const job = enqueue(obj);
-    console.log('Enqueued job:', job);
-  });
-
-// List jobs
-program
-  .command('list')
-  .option('--state <state>', 'Filter by state (pending, completed, dead)')
-  .description('List jobs in the queue')
-  .action((options) => {
-    const jobs = list(options.state);
-    console.table(jobs);
-  });
-
-// Status command
-program
-  .command('status')
-  .description('Show summary of all job states')
-  .action(() => {
-    const counts = db
-      .prepare('SELECT state, COUNT(*) as count FROM jobs GROUP BY state')
-      .all();
-    console.table(counts);
-  });
-
-// Worker management
-const worker = program.command('worker').description('Manage workers');
-
-// Worker start
-worker
   .command('start')
-  .option('--count <n>', 'Number of workers to start', '1')
-  .description('Start worker(s)')
+  .description('Start queue workers')
+  .option('-c, --count <number>', 'number of workers to start', '1')
   .action((options) => {
-    const count = parseInt(options.count || '1');
+    const count = parseInt(options.count, 10);
     console.log(`Starting ${count} worker(s)...`);
     startWorkers(count);
   });
 
-// Worker stop
-worker
-  .command('stop')
-  .description('Stop all workers')
-  .action(() => {
-    console.log('Stopping workers...');
-    stopWorkers();
-  });
-
-// Dead Letter Queue management
-const dlq = program.command('dlq').description('Dead Letter Queue management');
-
-// DLQ list
-dlq
-  .command('list')
-  .description('List dead jobs')
-  .action(() => {
-    const jobs = list('dead');
-    console.table(jobs);
-  });
-
-// DLQ retry
-dlq
-  .command('retry')
-  .argument('<id>', 'Retry a dead job by ID')
-  .description('Retry a job from the Dead Letter Queue')
-  .action((id) => {
-    const job = get(id);
-    if (!job) {
-      console.log('Job not found.');
-      return;
-    }
-    moveToState(id, 'pending');
-    console.log(`Moved job ${id} back to pending queue`);
-  });
-
-// Parse CLI arguments
-program.parse(process.argv);
-
-
-const metrics = require('./metrics');
+// Stop workers (optional)
 program
-  .command('metrics')
-  .description('Show runtime metrics')
-  .action(() => console.table(metrics.getAll()));
+  .command('stop')
+  .description('Stop queue workers gracefully')
+  .action(() => {
+    stopWorkers();
+    console.log('Workers stopped gracefully.');
+  });
 
+// Enqueue job
+program
+  .command('enqueue <command>')
+  .description('Enqueue a new job with the given shell command')
+  .action((cmd) => {
+    enqueue(cmd);
+  });
 
+// Show status
+program
+  .command('status')
+  .description('Show queue and worker status')
+  .action(() => {
+    showStatus();
+  });
 
-const { timedQuery } = require('./db');
-const counts = timedQuery('SELECT state, COUNT(*) as count FROM jobs GROUP BY state');
-
-program.option('--verbose', 'Enable verbose logging');
-if (program.opts().verbose) console.log('Verbose mode ON');
+program.parse(process.argv);
