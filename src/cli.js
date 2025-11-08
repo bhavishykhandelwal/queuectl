@@ -105,3 +105,10 @@ dlq
 
 // Parse CLI arguments
 program.parse(process.argv);
+
+
+const metrics = require('./metrics');
+program
+  .command('metrics')
+  .description('Show runtime metrics')
+  .action(() => console.table(metrics.getAll()));
