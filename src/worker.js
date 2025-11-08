@@ -177,3 +177,7 @@ function sleep(ms) {
 module.exports = { startWorkers, stopWorkers };
 
 logger.warn(`Job ${job.id} failed attempt #${job.retries}`);
+
+
+const duration = Date.now() - start;
+logger.info(`Job ${job.id} completed in ${duration} ms`);
