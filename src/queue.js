@@ -41,3 +41,7 @@ module.exports = {
   get,
   moveToState,
 };
+
+function moveToDLQ(job, error) {
+  db.prepare('UPDATE jobs SET state="dead", last_error=? WHERE id=?').run(error.message, job.id);
+}
