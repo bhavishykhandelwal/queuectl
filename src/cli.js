@@ -117,3 +117,6 @@ program
 
 const { timedQuery } = require('./db');
 const counts = timedQuery('SELECT state, COUNT(*) as count FROM jobs GROUP BY state');
+
+program.option('--verbose', 'Enable verbose logging');
+if (program.opts().verbose) console.log('Verbose mode ON');
