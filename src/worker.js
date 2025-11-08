@@ -186,3 +186,9 @@ const metrics = require('./metrics');
 metrics.incProcessed(); // success
 metrics.incFailed();    // failure
 
+
+process.on('SIGINT', () => {
+  logger.info('Graceful shutdown...');
+  stopWorkers();
+  process.exit(0);
+});
