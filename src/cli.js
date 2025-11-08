@@ -112,3 +112,8 @@ program
   .command('metrics')
   .description('Show runtime metrics')
   .action(() => console.table(metrics.getAll()));
+
+
+
+const { timedQuery } = require('./db');
+const counts = timedQuery('SELECT state, COUNT(*) as count FROM jobs GROUP BY state');
