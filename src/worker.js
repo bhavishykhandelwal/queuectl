@@ -181,3 +181,8 @@ logger.warn(`Job ${job.id} failed attempt #${job.retries}`);
 
 const duration = Date.now() - start;
 logger.info(`Job ${job.id} completed in ${duration} ms`);
+
+const metrics = require('./metrics');
+metrics.incProcessed(); // success
+metrics.incFailed();    // failure
+
