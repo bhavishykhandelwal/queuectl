@@ -1,23 +1,41 @@
-const { db } = require('./db');
+const Database = require('better-sqlite3');
+const path = require('path');
 
-const get = db.prepare('SELECT value FROM config WHERE key = ?');
-const set = db.prepare('INSERT OR REPLACE INTO config (key,value) VALUES (?,?)');
+// Use the same database file as the rest of the system
+const dbPath = path.join(__dirname, 'queue.db');
+const db = new Database(dbPath);
 
-function getConfig(key) {
-const row = get.get(key);
-return row ? row.value : null;
-}
+// Create config table if it doesn't exist
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS config (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  )
+`).run();
 
+// --- Set a configuration value ---
 function setConfig(key, value) {
-set.run(key, String(value));
+  const insert = db.prepare(`
+    INSERT INTO config (key, value)
+    VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value
+  `);
+  insert.run(key, value);
 }
 
-module.exports = { getConfig, setConfig };
-
-let cache = null;
-function read() {
-  if (cache) return cache;
-  const data = JSON.parse(fs.readFileSync(CFG, 'utf8'));
-  cache = data;
-  return data;
+// --- Get a configuration value ---
+function getConfig(key) {
+  const row = db.prepare('SELECT value FROM config WHERE key = ?').get(key);
+  return row ? row.value : null;
 }
+
+// --- List all configuration entries ---
+function listConfig() {
+  return db.prepare('SELECT * FROM config').all();
+}
+
+module.exports = {
+  setConfig,
+  getConfig,
+  listConfig,
+};
