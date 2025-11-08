@@ -45,3 +45,7 @@ module.exports = {
 function moveToDLQ(job, error) {
   db.prepare('UPDATE jobs SET state="dead", last_error=? WHERE id=?').run(error.message, job.id);
 }
+
+if (typeof job.command !== 'string' || job.command.trim() === '') {
+  throw new Error('Invalid job: command must be non-empty string');
+}
