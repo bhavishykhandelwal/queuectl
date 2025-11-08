@@ -3,12 +3,27 @@ const db = new Database('src/queue.db');
 
 // --- Enqueue a job ---
 function enqueue(job) {
+  
+  if (!job || typeof job.command !== 'string' || job.command.trim() === '') {
+    throw new Error('Invalid job: command must be a non-empty string');
+  }
+
+  if (job.priority && isNaN(job.priority)) {
+    throw new Error('Invalid job: priority must be a number');
+  }
+
   const insert = db.prepare(`
     INSERT INTO jobs (command, state, attempts, max_retries, created_at, updated_at)
     VALUES (@command, 'pending', 0, 3, datetime('now'), datetime('now'))
   `);
   const result = insert.run(job);
-  return { id: result.lastInsertRowid, ...job, state: 'pending', attempts: 0, max_retries: 3 };
+  return {
+    id: result.lastInsertRowid,
+    ...job,
+    state: 'pending',
+    attempts: 0,
+    max_retries: 3,
+  };
 }
 
 // --- List jobs ---
@@ -34,22 +49,16 @@ function moveToState(id, newState, error = null) {
   stmt.run(newState, error, id);
 }
 
+// --- Move job to DLQ ---
+function moveToDLQ(job, error) {
+  db.prepare('UPDATE jobs SET state="dead", last_error=? WHERE id=?').run(error.message, job.id);
+}
+
 // --- Export all ---
 module.exports = {
   enqueue,
   list,
   get,
   moveToState,
+  moveToDLQ,
 };
-
-function moveToDLQ(job, error) {
-  db.prepare('UPDATE jobs SET state="dead", last_error=? WHERE id=?').run(error.message, job.id);
-}
-
-if (typeof job.command !== 'string' || job.command.trim() === '') {
-  throw new Error('Invalid job: command must be non-empty string');
-}
-
-if (job.priority && isNaN(job.priority)) {
-  throw new Error('Invalid job: priority must be a number');
-}
