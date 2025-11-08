@@ -175,3 +175,5 @@ function sleep(ms) {
 }
 
 module.exports = { startWorkers, stopWorkers };
+
+logger.warn(`Job ${job.id} failed attempt #${job.retries}`);
