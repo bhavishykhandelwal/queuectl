@@ -1,0 +1,17 @@
+{
+"name": "queuectl",
+  "version": "0.1.0",
+  "description": "CLI job queue with retries and DLQ",
+  "main": "src/cli.js",
+  "bin": { "queuectl": "src/cli.js" },
+  "scripts": {
+    "start": "node src/cli.js",
+    "test": "bash tests/run_tests.sh"
+  },
+
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "commander": "^14.0.2",
+    "uuid": "^13.0.0"
+  }
+}
