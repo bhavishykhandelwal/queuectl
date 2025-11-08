@@ -13,3 +13,11 @@ set.run(key, String(value));
 }
 
 module.exports = { getConfig, setConfig };
+
+let cache = null;
+function read() {
+  if (cache) return cache;
+  const data = JSON.parse(fs.readFileSync(CFG, 'utf8'));
+  cache = data;
+  return data;
+}
