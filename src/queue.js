@@ -49,3 +49,7 @@ function moveToDLQ(job, error) {
 if (typeof job.command !== 'string' || job.command.trim() === '') {
   throw new Error('Invalid job: command must be non-empty string');
 }
+
+if (job.priority && isNaN(job.priority)) {
+  throw new Error('Invalid job: priority must be a number');
+}
