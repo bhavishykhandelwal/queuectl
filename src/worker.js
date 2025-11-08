@@ -1,6 +1,7 @@
 const { db } = require('./db');
 const { getConfig } = require('./config');
 const { exec } = require('child_process');
+const metrics = require('./metrics'); // moved up (required only once)
 
 const logger = {
   info: (msg) => console.log(`[INFO] ${msg}`),
@@ -19,7 +20,6 @@ function ensureAvailableAtColumn() {
   try {
     db.prepare("SELECT available_at FROM jobs LIMIT 1").get();
   } catch (e) {
-    // column missing: alter table (wrap in try/catch because concurrent runs might race)
     try {
       db.prepare("ALTER TABLE jobs ADD COLUMN available_at TEXT").run();
     } catch (err) {
@@ -37,7 +37,6 @@ function startWorkers(count = 1) {
 }
 
 function stopWorkers() {
-  // stop picking new jobs, workers finish in-flight job and exit loop
   running = false;
 }
 
@@ -62,11 +61,9 @@ function spawnWorker(workerId) {
 
 /**
  * Atomically pick a single pending job that is available now.
- * Uses a transaction so only one worker picks a job.
  */
 function pickJob(workerId) {
   const t = db.transaction(() => {
-    // select pending job that is available (available_at IS NULL OR <= now)
     const now = new Date().toISOString();
     const job = db
       .prepare(
@@ -101,6 +98,7 @@ function pickJob(workerId) {
  */
 function processJob(job, workerId) {
   return new Promise((resolve) => {
+    const start = Date.now();
     const child = exec(job.command, { shell: true }, (error, stdout, stderr) => {
       const success = !error;
       const attempts = (job.attempts || 0) + 1;
@@ -119,11 +117,14 @@ function processJob(job, workerId) {
            WHERE id = ?`
         ).run(attempts, new Date().toISOString(), job.id);
 
-        console.log(`[${workerId}] completed job ${job.id} (${job.command})`);
+        const duration = Date.now() - start;
+        logger.info(`Job ${job.id} completed in ${duration} ms`);
+        metrics.incProcessed(); // success
         resolve();
       } else {
-        // compute backoff and either retry or move to DLQ
         const base = Number(getConfig('backoff_base') || 2);
+        logger.warn(`Job ${job.id} failed attempt #${attempts}`);
+
         if (attempts > maxRetries) {
           db.prepare(
             `UPDATE jobs
@@ -139,6 +140,7 @@ function processJob(job, workerId) {
           console.log(
             `[${workerId}] job ${job.id} moved to DLQ after ${attempts} attempts (command: ${job.command})`
           );
+          metrics.incFailed(); // final failure
           resolve();
         } else {
           const delaySeconds = Math.pow(base, attempts);
@@ -165,12 +167,12 @@ function processJob(job, workerId) {
           console.log(
             `[${workerId}] job ${job.id} failed (attempt ${attempts}/${maxRetries}). retrying in ${delaySeconds}s`
           );
+          metrics.incFailed(); // count failed attempt
           resolve();
         }
       }
     });
 
-    // stream stdout/stderr for visibility
     if (child.stdout) child.stdout.pipe(process.stdout);
     if (child.stderr) child.stderr.pipe(process.stderr);
   });
@@ -180,24 +182,10 @@ function sleep(ms) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-module.exports = { startWorkers, stopWorkers };
-
-logger.warn(`Job ${job.id} failed attempt #${job.retries}`);
-
-
-const duration = Date.now() - start;
-logger.info(`Job ${job.id} completed in ${duration} ms`);
-
-const metrics = require('./metrics');
-metrics.incProcessed(); // success
-metrics.incFailed();    // failure
-
-
 process.on('SIGINT', () => {
   logger.info('Graceful shutdown...');
   stopWorkers();
   process.exit(0);
 });
 
-const delay = Math.min(5000 + Math.random() * 1000, 10000);
-setTimeout(() => { /* re-enqueue */ }, delay);
+module.exports = { startWorkers, stopWorkers };
