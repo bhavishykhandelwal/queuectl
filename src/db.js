@@ -30,3 +30,12 @@ function init() {
 
 module.exports = { db, init };
 db.prepare('ALTER TABLE jobs ADD COLUMN retries INTEGER DEFAULT 0').run();
+
+
+function timedQuery(sql) {
+  const start = Date.now();
+  const result = db.prepare(sql).all();
+  console.log(`[DB] Query took ${Date.now() - start}ms`);
+  return result;
+}
+exports.timedQuery = timedQuery;
