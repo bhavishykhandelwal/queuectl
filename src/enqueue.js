@@ -1,18 +1,16 @@
-const { db } = require('./db');
+// src/enqueue.js
 
-function enqueue(command) {
-  if (typeof command !== 'string' || command.trim() === '') {
-    console.error('Invalid command: must be a non-empty string.');
-    process.exit(1);
+import db from './db.js';
+import { logSuccess, logInfo, logError } from './logger.js';
+
+export function enqueueJob(command) {
+  try {
+    const stmt = db.prepare(`
+      INSERT INTO jobs (command, state) VALUES (?, 'pending')
+    `);
+    const info = stmt.run(command);
+    logSuccess(`Enqueued job ID ${info.lastInsertRowid}: ${command}`);
+  } catch (err) {
+    logError(`Failed to enqueue job: ${err.message}`);
   }
-
-  const insert = db.prepare(`
-    INSERT INTO jobs (command, state, attempts, max_retries, created_at, updated_at)
-    VALUES (?, 'pending', 0, 3, datetime('now'), datetime('now'))
-  `);
-  
-  const result = insert.run(command);
-  console.log(`✅ Job #${result.lastInsertRowid} enqueued: "${command}"`);
 }
-
-module.exports = { enqueue };

@@ -1,191 +1,29 @@
-const { db } = require('./db');
-const { getConfig } = require('./config');
-const { exec } = require('child_process');
-const metrics = require('./metrics'); // moved up (required only once)
+import { execSync } from 'child_process';
+import { getPendingJob, updateJobStatus } from './queue.js';
 
-const logger = {
-  info: (msg) => console.log(`[INFO] ${msg}`),
-  warn: (msg) => console.warn(`[WARN] ${msg}`),
-  error: (msg) => console.error(`[ERROR] ${msg}`),
-};
+export function startWorkers(count = 1) {
+  console.log(`🚀 Starting ${count} worker(s)...`);
 
-let running = false;
-let workerIdCounter = 0;
-
-/**
- * Ensure migration: add available_at column if it doesn't exist.
- * Safe to call repeatedly.
- */
-function ensureAvailableAtColumn() {
-  try {
-    db.prepare("SELECT available_at FROM jobs LIMIT 1").get();
-  } catch (e) {
-    try {
-      db.prepare("ALTER TABLE jobs ADD COLUMN available_at TEXT").run();
-    } catch (err) {
-      // ignore if already added by another process
-    }
-  }
-}
-
-function startWorkers(count = 1) {
-  ensureAvailableAtColumn();
-  running = true;
   for (let i = 0; i < count; i++) {
-    spawnWorker(`worker-${++workerIdCounter}`);
+    runWorker(i + 1);
   }
 }
 
-function stopWorkers() {
-  running = false;
-}
+function runWorker(workerId) {
+  setInterval(() => {
+    const job = getPendingJob();
+    if (job) {
+      console.log(`🧠 Worker ${workerId} picked job #${job.id}`);
+      updateJobStatus(job.id, 'running');
 
-function spawnWorker(workerId) {
-  (async function loop() {
-    console.log(`[${workerId}] started`);
-    while (running) {
-      const job = pickJob(workerId);
-      if (!job) {
-        await sleep(1000);
-        continue;
-      }
       try {
-        await processJob(job, workerId);
+        const output = execSync(job.command, { encoding: 'utf8' });
+        console.log(`✅ Job #${job.id} completed:\n${output}`);
+        updateJobStatus(job.id, 'completed');
       } catch (err) {
-        console.error(`[${workerId}] unexpected error processing job ${job.id}:`, err);
+        console.error(`❌ Job #${job.id} failed: ${err.message}`);
+        updateJobStatus(job.id, 'failed');
       }
     }
-    console.log(`[${workerId}] shutting down`);
-  })();
+  }, 2000);
 }
-
-/**
- * Atomically pick a single pending job that is available now.
- */
-function pickJob(workerId) {
-  const t = db.transaction(() => {
-    const now = new Date().toISOString();
-    const job = db
-      .prepare(
-        `SELECT * FROM jobs
-         WHERE state = 'pending' AND (available_at IS NULL OR available_at <= ?)
-         ORDER BY created_at
-         LIMIT 1`
-      )
-      .get(now);
-
-    if (!job) return null;
-
-    db.prepare(
-      `UPDATE jobs
-       SET state = 'processing', locked_by = ?, locked_at = ?, updated_at = ?
-       WHERE id = ?`
-    ).run(workerId, now, now, job.id);
-
-    return db.prepare('SELECT * FROM jobs WHERE id = ?').get(job.id);
-  });
-
-  try {
-    return t();
-  } catch (err) {
-    console.error(`[${workerId}] pickJob transaction failed:`, err);
-    return null;
-  }
-}
-
-/**
- * Execute the job.command, update attempts, set backoff or dead state.
- */
-function processJob(job, workerId) {
-  return new Promise((resolve) => {
-    const start = Date.now();
-    const child = exec(job.command, { shell: true }, (error, stdout, stderr) => {
-      const success = !error;
-      const attempts = (job.attempts || 0) + 1;
-      const maxRetries = job.max_retries || Number(getConfig('max_retries') || 3);
-
-      if (success) {
-        db.prepare(
-          `UPDATE jobs
-           SET state = 'completed',
-               attempts = ?,
-               updated_at = ?,
-               locked_by = NULL,
-               locked_at = NULL,
-               last_error = NULL,
-               available_at = NULL
-           WHERE id = ?`
-        ).run(attempts, new Date().toISOString(), job.id);
-
-        const duration = Date.now() - start;
-        logger.info(`Job ${job.id} completed in ${duration} ms`);
-        metrics.incProcessed(); // success
-        resolve();
-      } else {
-        const base = Number(getConfig('backoff_base') || 2);
-        logger.warn(`Job ${job.id} failed attempt #${attempts}`);
-
-        if (attempts > maxRetries) {
-          db.prepare(
-            `UPDATE jobs
-             SET state = 'dead',
-                 attempts = ?,
-                 updated_at = ?,
-                 locked_by = NULL,
-                 locked_at = NULL,
-                 last_error = ?
-             WHERE id = ?`
-          ).run(attempts, new Date().toISOString(), String(stderr || error.message), job.id);
-
-          console.log(
-            `[${workerId}] job ${job.id} moved to DLQ after ${attempts} attempts (command: ${job.command})`
-          );
-          metrics.incFailed(); // final failure
-          resolve();
-        } else {
-          const delaySeconds = Math.pow(base, attempts);
-          const nextRun = new Date(Date.now() + delaySeconds * 1000).toISOString();
-
-          db.prepare(
-            `UPDATE jobs
-             SET state = 'pending',
-                 attempts = ?,
-                 updated_at = ?,
-                 locked_by = NULL,
-                 locked_at = NULL,
-                 last_error = ?,
-                 available_at = ?
-             WHERE id = ?`
-          ).run(
-            attempts,
-            new Date().toISOString(),
-            String(stderr || error.message),
-            nextRun,
-            job.id
-          );
-
-          console.log(
-            `[${workerId}] job ${job.id} failed (attempt ${attempts}/${maxRetries}). retrying in ${delaySeconds}s`
-          );
-          metrics.incFailed(); // count failed attempt
-          resolve();
-        }
-      }
-    });
-
-    if (child.stdout) child.stdout.pipe(process.stdout);
-    if (child.stderr) child.stderr.pipe(process.stderr);
-  });
-}
-
-function sleep(ms) {
-  return new Promise((res) => setTimeout(res, ms));
-}
-
-process.on('SIGINT', () => {
-  logger.info('Graceful shutdown...');
-  stopWorkers();
-  process.exit(0);
-});
-
-module.exports = { startWorkers, stopWorkers };

@@ -1,64 +1,36 @@
-const Database = require('better-sqlite3');
-const db = new Database('src/queue.db');
+import db from './db.js';
+import { logInfo, logError } from './logger.js';
+import { exec } from 'child_process';
+import util from 'util';
+import { sleep } from './utils.js';
 
-// --- Enqueue a job ---
-function enqueue(job) {
-  
-  if (!job || typeof job.command !== 'string' || job.command.trim() === '') {
-    throw new Error('Invalid job: command must be a non-empty string');
+const execAsync = util.promisify(exec);
+
+export async function workerLoop(workerId) {
+  while (true) {
+    const job = db.prepare(`SELECT * FROM jobs WHERE state='pending' ORDER BY id LIMIT 1`).get();
+
+    if (!job) {
+      await sleep(1000);
+      continue;
+    }
+
+    db.prepare(`UPDATE jobs SET state='running', updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(job.id);
+    logInfo(`Worker ${workerId} started job ${job.id}`);
+
+    try {
+      const { stdout } = await execAsync(job.command);
+      db.prepare(`
+        UPDATE jobs SET state='completed', last_output=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
+      `).run(stdout, job.id);
+      logInfo(`Worker ${workerId} finished job ${job.id} ✅`);
+    } catch (err) {
+      logError(`Worker ${workerId} failed job ${job.id}: ${err.message}`);
+      db.prepare(`
+        UPDATE jobs SET state='failed', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
+      `).run(err.message, job.id);
+    }
+
+    await sleep(500);
   }
-
-  if (job.priority && isNaN(job.priority)) {
-    throw new Error('Invalid job: priority must be a number');
-  }
-
-  const insert = db.prepare(`
-    INSERT INTO jobs (command, state, attempts, max_retries, created_at, updated_at)
-    VALUES (@command, 'pending', 0, 3, datetime('now'), datetime('now'))
-  `);
-  const result = insert.run(job);
-  return {
-    id: result.lastInsertRowid,
-    ...job,
-    state: 'pending',
-    attempts: 0,
-    max_retries: 3,
-  };
 }
-
-// --- List jobs ---
-function list(state = null) {
-  if (state) {
-    return db.prepare('SELECT * FROM jobs WHERE state = ? ORDER BY id DESC').all(state);
-  }
-  return db.prepare('SELECT * FROM jobs ORDER BY id DESC').all();
-}
-
-// --- Get job by ID ---
-function get(id) {
-  return db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
-}
-
-// --- Move job to another state ---
-function moveToState(id, newState, error = null) {
-  const stmt = db.prepare(`
-    UPDATE jobs
-    SET state = ?, updated_at = datetime('now'), last_error = ?
-    WHERE id = ?
-  `);
-  stmt.run(newState, error, id);
-}
-
-// --- Move job to DLQ ---
-function moveToDLQ(job, error) {
-  db.prepare('UPDATE jobs SET state="dead", last_error=? WHERE id=?').run(error.message, job.id);
-}
-
-// --- Export all ---
-module.exports = {
-  enqueue,
-  list,
-  get,
-  moveToState,
-  moveToDLQ,
-};
