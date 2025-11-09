@@ -77,7 +77,7 @@ Job Storage: SQLite database ensures persistent storage of jobs and states.
 Worker Logic: Workers lock a job, execute it, update its state, and log results.
 Retry Mechanism: Jobs failing are retried automatically with exponential backoff:
 
-Project Structure->
+Project Structure Main Logic File->
 queuectl/
 ├─ src/
 │  ├─ enqueue.js       # Job enqueue logic
